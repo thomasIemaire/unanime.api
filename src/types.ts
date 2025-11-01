@@ -1,5 +1,3 @@
-// ==== Types alignés sur tes interfaces front (simplifiés pour le serveur) ====
-
 export type QuestionRevealStatisticsType = 'bar_chart' | 'pie_chart' | 'word_cloud' | 'none';
 
 export interface QuestionMedia {
@@ -44,7 +42,7 @@ export interface QuestionReveal {
 
 export interface QuestionDuration {
     type: 'timer' | 'manual';
-    duration?: number; // secondes
+    duration?: number;
 }
 
 export interface QuestionScore {
@@ -74,8 +72,8 @@ export interface LiveSettings {
     sessionCode?: string;
     hostSessionCode?: string;
     lobbyEnabled?: boolean;
-    interQuestionCountdownSec?: number; // entre questions après reveal
-    autoAdvanceAfterRevealSec?: number; // NEW: avance auto après reveal (ex: 5s)
+    interQuestionCountdownSec?: number;
+    autoAdvanceAfterRevealSec?: number;
 }
 
 export type LivePhase = 'asking' | 'revealing';
@@ -84,7 +82,7 @@ export interface FormSection {
     id: string;
     title?: string;
     description?: string;
-    items: Question[]; // tes questions
+    items: Question[];
 }
 
 export interface BranchRule {
@@ -113,16 +111,13 @@ export interface Form {
     branchRules?: BranchRule[];
 }
 
-// ==== Événements Socket ====
-
 export type ClientToServerEvents = {
     'join_form': (payload: { formId: string; role: 'admin' | 'viewer'; sessionCode?: string; hostSessionCode?: string; participantId?: string; displayName?: string }) => void;
     'get_state': (payload: { formId: string }) => void;
     'submit_answer': (payload: { formId: string; questionId: string; value: { choiceIds?: string[]; text?: string; number?: number } }) => void;
 
-    // Admin
     'admin:set_question': (payload: { formId: string; sectionIndex: number; itemIndex: number }) => void;
-    'admin:start_question': (payload: { formId: string }) => void; // << ICI
+    'admin:start_question': (payload: { formId: string }) => void;
     'admin:next': (payload: { formId: string }) => void;
     'admin:reveal': (payload: { formId: string; show: boolean }) => void;
     'admin:lock': (payload: { formId: string; locked: boolean }) => void;
@@ -131,8 +126,6 @@ export type ClientToServerEvents = {
 export type ServerToClientEvents = {
     'state': (state: LiveState) => void;
     'results': (payload: { questionId: string; aggregates: any }) => void;
-
-    // --- NEW: flux admin ---
     'admin:dashboard': (payload: {
         formId: string;
         sectionIndex: number;
@@ -156,5 +149,5 @@ export interface LiveState {
     locked: boolean;
     revealResults: boolean;
     timer?: { remaining?: number; total?: number } | null;
-    phase?: LivePhase; // NEW
+    phase?: LivePhase;
 }

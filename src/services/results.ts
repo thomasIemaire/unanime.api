@@ -1,7 +1,13 @@
 import { ResponseModel } from '../models.js';
 
-export async function aggregateResults(formId: string, questionId: string) {
-    // Regroupe count par choiceId, et collecte texte pour word cloud côté client
+export interface AggregatedResults {
+    byChoice: { choiceId: string | null; count: number }[];
+    texts: { text: string }[];
+    numbers: { values: number[] }[];
+    totals: { total: number }[];
+}
+
+export async function aggregateResults(formId: string, questionId: string): Promise<AggregatedResults> {
     const pipeline = [
         { $match: { formId, questionId } },
         {
@@ -24,6 +30,6 @@ export async function aggregateResults(formId: string, questionId: string) {
             }
         }
     ];
-    const [res] = await ResponseModel.aggregate(pipeline);
-    return res || { byChoice: [], texts: [], numbers: [], totals: [{ total: 0 }] };
+    const [result] = await ResponseModel.aggregate<AggregatedResults>(pipeline);
+    return result ?? { byChoice: [], texts: [], numbers: [], totals: [{ total: 0 }] };
 }
