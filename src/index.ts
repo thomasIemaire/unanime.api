@@ -13,14 +13,36 @@ import type { AggregatedResults } from './services/results.js';
 import type { ClientToServerEvents, ServerToClientEvents, LiveState, Form } from './types.js';
 
 const PORT = Number(process.env.PORT || 8080);
-const ORIGIN = process.env.CORS_ORIGIN || '*';
+const rawOrigins = process.env.CORS_ORIGIN
+    ?.split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+const allowAllOrigins = !rawOrigins || rawOrigins.includes('*');
+const allowedOrigins = allowAllOrigins ? [] : rawOrigins ?? [];
 const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/liveforms';
 
 await connectMongo(MONGO_URI);
 
+const corsOptions: cors.CorsOptions = allowAllOrigins
+    ? { origin: true, credentials: true }
+    : {
+          origin: (origin, callback) => {
+              if (!origin) {
+                  callback(null, true);
+                  return;
+              }
+              if (allowedOrigins.includes(origin)) {
+                  callback(null, true);
+                  return;
+              }
+              callback(new Error('Not allowed by CORS'));
+          },
+          credentials: true
+      };
+
 const app = express();
 app.use(helmet());
-app.use(cors({ origin: ORIGIN, credentials: true }));
+app.use(cors(corsOptions));
 app.use(express.json({ limit: '1mb' }));
 
 app.post('/forms', async (req, res) => {
@@ -66,7 +88,9 @@ app.get('/forms/:id', async (req, res) => {
 const httpServer = createServer(app);
 
 const io = new Server<ClientToServerEvents, ServerToClientEvents>(httpServer, {
-    cors: { origin: ORIGIN, credentials: true }
+    cors: allowAllOrigins
+        ? { origin: true, credentials: true }
+        : { origin: allowedOrigins, credentials: true }
 });
 
 type FormDocument = Form & { _id: string };
