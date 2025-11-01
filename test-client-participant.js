@@ -1,7 +1,7 @@
 import { io } from "socket.io-client";
 
 const serverUrl = process.env.SERVER_URL ?? "http://localhost:8080";
-const formId = process.env.FORM_ID ?? "ia_sondage_live_001";
+const formId = process.env.FORM_ID ?? "ia_sondage_live_002";
 const sessionCode = process.env.SESSION_CODE ?? 'IA2025';
 const participantId = process.env.PARTICIPANT_ID ?? `participant-${Math.random().toString(36).slice(2, 8)}`;
 const displayName = process.env.DISPLAY_NAME ?? "Participant Bot";
