@@ -61,6 +61,10 @@ socket.on("admin:results", (payload) => {
     console.log("📈 admin results", JSON.stringify(payload, null, 2));
 });
 
+socket.on("admin:explanation", (payload) => {
+    console.log("🧠 admin explanation", JSON.stringify(payload, null, 2));
+});
+
 socket.on("state", (state) => {
     console.log("🛰️  state", JSON.stringify(state, null, 2));
 });

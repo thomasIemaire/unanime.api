@@ -137,7 +137,10 @@ export type ServerToClientEvents = {
     'admin:results': (payload: {
         questionId: string;
         aggregates: any;
+        interpretation?: string | null;
     }) => void;
+
+    'admin:explanation': (payload: { questionId: string; explanation: string }) => void;
 
     'error_msg': (payload: { code: string; message: string }) => void;
 };

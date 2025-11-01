@@ -8,6 +8,7 @@ import { Server } from 'socket.io';
 import { connectMongo, FormModel, SessionModel, ResponseModel } from './models.js';
 import type { SessionDoc } from './models.js';
 import { aggregateResults } from './services/results.js';
+import { generateResultsInterpretation } from './services/ai.js';
 import type { AggregatedResults } from './services/results.js';
 import type { ClientToServerEvents, ServerToClientEvents, LiveState, Form } from './types.js';
 
@@ -405,6 +406,48 @@ io.on('connection', (socket) => {
     socket.on('admin:lock', async ({ formId, locked }) => {
         await SessionModel.updateOne({ formId }, { $set: { locked } });
         await broadcastState(formId);
+
+        if (!locked) {
+            return;
+        }
+
+        const [formDoc, session] = await Promise.all([fetchForm(formId), fetchSession(formId)]);
+        if (!formDoc || !session) {
+            return;
+        }
+
+        const section = formDoc.sections?.[session.sectionIndex];
+        const question = section?.items?.[session.itemIndex];
+        if (
+            !question?.id ||
+            !question.reveal?.explanation?.showExplanation ||
+            !question.reveal?.explanation?.explanationAi
+        ) {
+            return;
+        }
+
+        try {
+            const aggregates = await aggregateResults(formId, question.id);
+            const interpretation = await generateResultsInterpretation({
+                question,
+                aggregates
+            });
+
+            if (interpretation) {
+                io.to(adminRoom(formId)).emit('admin:explanation', {
+                    questionId: question.id,
+                    explanation: interpretation
+                });
+            }
+
+            io.to(adminRoom(formId)).emit('admin:results', {
+                questionId: question.id,
+                aggregates,
+                interpretation: interpretation ?? null
+            });
+        } catch (error) {
+            console.error('Failed to generate AI explanation on lock', error);
+        }
     });
 });
 
