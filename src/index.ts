@@ -220,6 +220,7 @@ io.on('connection', (socket) => {
                 if (q && q.id === questionId) {
                     const aggregates = await aggregateResults(formId, questionId);
                     io.to(adminRoom(formId)).emit('admin:results', { questionId, aggregates }); // <<< NEW
+                    await emitAdminDashboard(formId);
                 }
             }
         } catch (e: any) {
@@ -236,6 +237,7 @@ io.on('connection', (socket) => {
             { new: true, upsert: true }
         );
         io.to(room(formId)).emit('state', await getState(formId));
+        await emitAdminDashboard(formId);
     });
 
     socket.on('admin:start_question', async ({ formId }) => {
@@ -256,6 +258,7 @@ io.on('connection', (socket) => {
         );
 
         io.to(room(formId)).emit('state', await getState(formId));
+        await emitAdminDashboard(formId);
     });
 
     socket.on('admin:next', async ({ formId }) => {
