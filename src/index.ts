@@ -102,6 +102,11 @@ const io = new Server<ClientToServerEvents, ServerToClientEvents>(httpServer, {
 type FormDocument = Form & { _id: string };
 type DashboardContext = { questionId?: string; aggregates?: AggregatedResults | null };
 
+type ParticipantResultSubscription = { formId: string; questionId: string };
+
+const participantResultSubscriptions = new Map<string, Map<string, Set<string>>>();
+const socketResultSubscriptions = new Map<string, ParticipantResultSubscription>();
+
 function room(formId: string) {
     return `form:${formId}`;
 }
@@ -116,6 +121,75 @@ async function fetchForm(formId: string): Promise<FormDocument | null> {
 
 async function fetchSession(formId: string): Promise<SessionDoc | null> {
     return SessionModel.findOne({ formId }).lean<SessionDoc>().exec();
+}
+
+function removeSocketSubscription(socketId: string) {
+    const existing = socketResultSubscriptions.get(socketId);
+    if (!existing) {
+        return;
+    }
+
+    const formSubscriptions = participantResultSubscriptions.get(existing.formId);
+    if (formSubscriptions) {
+        const questionSubscriptions = formSubscriptions.get(existing.questionId);
+        if (questionSubscriptions) {
+            questionSubscriptions.delete(socketId);
+            if (questionSubscriptions.size === 0) {
+                formSubscriptions.delete(existing.questionId);
+            }
+        }
+        if (formSubscriptions.size === 0) {
+            participantResultSubscriptions.delete(existing.formId);
+        }
+    }
+
+    socketResultSubscriptions.delete(socketId);
+}
+
+function subscribeParticipantToResults(socketId: string, formId: string, questionId: string) {
+    const existing = socketResultSubscriptions.get(socketId);
+    if (existing?.formId === formId && existing?.questionId === questionId) {
+        return;
+    }
+
+    removeSocketSubscription(socketId);
+
+    let formSubscriptions = participantResultSubscriptions.get(formId);
+    if (!formSubscriptions) {
+        formSubscriptions = new Map();
+        participantResultSubscriptions.set(formId, formSubscriptions);
+    }
+
+    let questionSubscriptions = formSubscriptions.get(questionId);
+    if (!questionSubscriptions) {
+        questionSubscriptions = new Set();
+        formSubscriptions.set(questionId, questionSubscriptions);
+    }
+
+    questionSubscriptions.add(socketId);
+    socketResultSubscriptions.set(socketId, { formId, questionId });
+}
+
+function clearFormSubscriptions(formId: string) {
+    const formSubscriptions = participantResultSubscriptions.get(formId);
+    if (!formSubscriptions) {
+        return;
+    }
+
+    for (const socketIds of formSubscriptions.values()) {
+        for (const socketId of socketIds) {
+            const subscription = socketResultSubscriptions.get(socketId);
+            if (subscription?.formId === formId) {
+                socketResultSubscriptions.delete(socketId);
+            }
+        }
+    }
+
+    participantResultSubscriptions.delete(formId);
+}
+
+function getSubscriberSockets(formId: string, questionId: string): Set<string> | undefined {
+    return participantResultSubscriptions.get(formId)?.get(questionId);
 }
 
 async function getState(formId: string): Promise<LiveState> {
@@ -166,7 +240,10 @@ async function getCurrentQuestion(formId: string, session?: SessionDoc | null) {
     return { question, sectionIndex: currentSession.sectionIndex, itemIndex: currentSession.itemIndex };
 }
 
-async function emitAdminDashboard(formId: string, context: DashboardContext = {}) {
+async function emitAdminDashboard(
+    formId: string,
+    context: DashboardContext = {}
+): Promise<{ questionId: string | null; aggregates: AggregatedResults | null }> {
     const session = await fetchSession(formId);
     const { question, sectionIndex, itemIndex } = await getCurrentQuestion(formId, session);
     const shouldReuseAggregates = Boolean(
@@ -185,21 +262,41 @@ async function emitAdminDashboard(formId: string, context: DashboardContext = {}
         question,
         aggregates
     });
+
+    return { questionId: question?.id ?? null, aggregates };
 }
 
 async function emitAggregates(
     formId: string,
     questionId: string,
-    destinations: { includeRoom?: boolean; includeAdmin?: boolean }
+    destinations: { includeRoom?: boolean; includeAdmin?: boolean },
+    precomputedAggregates?: AggregatedResults | null
 ) {
-    if (!destinations.includeRoom && !destinations.includeAdmin) {
+    const subscribers = getSubscriberSockets(formId, questionId);
+    const hasSubscribers = Boolean(subscribers && subscribers.size > 0);
+    const needsAggregates =
+        destinations.includeRoom || destinations.includeAdmin || hasSubscribers || precomputedAggregates !== undefined;
+    if (!needsAggregates) {
         return;
     }
 
-    const aggregates = await aggregateResults(formId, questionId);
+    const aggregates =
+        precomputedAggregates !== undefined ? precomputedAggregates ?? null : await aggregateResults(formId, questionId);
+
+    if (!aggregates) {
+        return;
+    }
+
+    const resultPayload = { questionId, aggregates };
+
+    if (hasSubscribers && subscribers) {
+        for (const socketId of subscribers) {
+            io.to(socketId).emit('results', resultPayload);
+        }
+    }
 
     if (destinations.includeRoom) {
-        io.to(room(formId)).emit('results', { questionId, aggregates });
+        io.to(room(formId)).emit('results', resultPayload);
     }
 
     if (destinations.includeAdmin) {
@@ -267,6 +364,7 @@ async function advanceToNextQuestion(formId: string, form?: FormDocument | null)
         );
     }
 
+    clearFormSubscriptions(formId);
     await broadcastStateAndDashboard(formId);
 }
 
@@ -296,11 +394,18 @@ io.on('connection', (socket) => {
                 return;
             }
 
+            removeSocketSubscription(socket.id);
             socket.join(room(formId));
 
             if (role === 'admin' && hasAdminAccess) {
                 socket.join(adminRoom(formId));
-                await emitAdminDashboard(formId);
+                const dashboard = await emitAdminDashboard(formId);
+                if (dashboard.questionId && dashboard.aggregates) {
+                    socket.emit('admin:results', {
+                        questionId: dashboard.questionId,
+                        aggregates: dashboard.aggregates
+                    });
+                }
             }
 
             const state = await getState(formId);
@@ -332,6 +437,12 @@ io.on('connection', (socket) => {
                 return;
             }
 
+            const currentQuestion = await getCurrentQuestion(formId, session);
+            if (currentQuestion.question?.id !== questionId) {
+                socket.emit('error_msg', { code: 'not_current_question', message: 'Question non active' });
+                return;
+            }
+
             const participantAuth = socket.handshake.auth?.participantId;
             const participantId =
                 typeof participantAuth === 'string' && participantAuth.length > 0
@@ -344,11 +455,16 @@ io.on('connection', (socket) => {
                 { upsert: true }
             );
 
-            const currentQuestion = await getCurrentQuestion(formId, session);
-            await emitAggregates(formId, questionId, {
-                includeRoom: session.revealResults,
-                includeAdmin: currentQuestion.question?.id === questionId
-            });
+            subscribeParticipantToResults(socket.id, formId, questionId);
+
+            await emitAggregates(
+                formId,
+                questionId,
+                {
+                    includeRoom: session.revealResults,
+                    includeAdmin: true
+                }
+            );
         } catch (error) {
             socket.emit('error_msg', { code: 'submit_error', message: (error as Error).message });
         }
@@ -369,6 +485,29 @@ io.on('connection', (socket) => {
             },
             { new: true, upsert: true }
         );
+        clearFormSubscriptions(formId);
+        await broadcastStateAndDashboard(formId);
+    });
+
+    socket.on('admin:reset_form', async ({ formId }) => {
+        await Promise.all([
+            SessionModel.findOneAndUpdate(
+                { formId },
+                {
+                    $set: {
+                        sectionIndex: 0,
+                        itemIndex: 0,
+                        revealResults: false,
+                        locked: false,
+                        phase: 'asking',
+                        timerEndsAt: null
+                    }
+                },
+                { new: true, upsert: true }
+            ),
+            ResponseModel.deleteMany({ formId })
+        ]);
+        clearFormSubscriptions(formId);
         await broadcastStateAndDashboard(formId);
     });
 
@@ -478,6 +617,10 @@ io.on('connection', (socket) => {
         } catch (error) {
             console.error('Failed to generate AI explanation on lock', error);
         }
+    });
+
+    socket.on('disconnect', () => {
+        removeSocketSubscription(socket.id);
     });
 });
 

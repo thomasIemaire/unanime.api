@@ -121,6 +121,7 @@ export type ClientToServerEvents = {
     'admin:next': (payload: { formId: string }) => void;
     'admin:reveal': (payload: { formId: string; show: boolean }) => void;
     'admin:lock': (payload: { formId: string; locked: boolean }) => void;
+    'admin:reset_form': (payload: { formId: string }) => void;
 };
 
 export type ServerToClientEvents = {
