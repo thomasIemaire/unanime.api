@@ -23,25 +23,31 @@ const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/liveforms'
 
 await connectMongo(MONGO_URI);
 
-const corsOptions: cors.CorsOptions = allowAllOrigins
-    ? { origin: true, credentials: true }
-    : {
-          origin: (origin, callback) => {
-              if (!origin) {
-                  callback(null, true);
-                  return;
-              }
-              if (allowedOrigins.includes(origin)) {
-                  callback(null, true);
-                  return;
-              }
-              callback(new Error('Not allowed by CORS'));
-          },
-          credentials: true
-      };
+// const corsOptions: cors.CorsOptions = allowAllOrigins
+//     ? { origin: true, credentials: true }
+//     : {
+//           origin: (origin, callback) => {
+//               if (!origin) {
+//                   callback(null, true);
+//                   return;
+//               }
+//               if (allowedOrigins.includes(origin)) {
+//                   callback(null, true);
+//                   return;
+//               }
+//               callback(new Error('Not allowed by CORS'));
+//           },
+//           credentials: true
+//       };
+
+const corsOptions: cors.CorsOptions = {
+  origin: (_origin, cb) => cb(null, true),
+  credentials: true,
+};
 
 const app = express();
 app.use(helmet());
+app.options('*', cors(corsOptions));
 app.use(cors(corsOptions));
 app.use(express.json({ limit: '1mb' }));
 
