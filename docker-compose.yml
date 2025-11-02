@@ -1,0 +1,28 @@
+services:
+  api:
+    build: .
+    image: unanime-api
+    env_file:
+      - .env
+    environment:
+      - PORT=8080
+      - MONGO_URI=mongodb://mongo:27017/liveforms
+    ports:
+      - "8080:8080"
+    depends_on:
+      mongo:
+        condition: service_healthy
+    restart: unless-stopped
+  mongo:
+    image: mongo:7.0
+    restart: unless-stopped
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+volumes:
+  mongo-data:
