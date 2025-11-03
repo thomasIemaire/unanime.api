@@ -106,6 +106,8 @@ type ParticipantResultSubscription = { formId: string; questionId: string };
 
 const participantResultSubscriptions = new Map<string, Map<string, Set<string>>>();
 const socketResultSubscriptions = new Map<string, ParticipantResultSubscription>();
+const formViewerSockets = new Map<string, Set<string>>();
+const socketParticipation = new Map<string, { formId: string; role: 'admin' | 'viewer' }>();
 
 function room(formId: string) {
     return `form:${formId}`;
@@ -144,6 +146,62 @@ function removeSocketSubscription(socketId: string) {
     }
 
     socketResultSubscriptions.delete(socketId);
+}
+
+function emitParticipantsCount(formId: string) {
+    const count = formViewerSockets.get(formId)?.size ?? 0;
+    io.to(room(formId)).emit('participants_count', { count });
+    io.to(adminRoom(formId)).emit('participants_count', { count });
+}
+
+function removeSocketParticipation(socketId: string) {
+    const existing = socketParticipation.get(socketId);
+    if (!existing) {
+        return;
+    }
+
+    socketParticipation.delete(socketId);
+
+    if (existing.role !== 'viewer') {
+        return;
+    }
+
+    const viewers = formViewerSockets.get(existing.formId);
+    if (!viewers) {
+        return;
+    }
+
+    viewers.delete(socketId);
+    if (viewers.size === 0) {
+        formViewerSockets.delete(existing.formId);
+    }
+
+    emitParticipantsCount(existing.formId);
+}
+
+function setSocketParticipation(socketId: string, formId: string, role: 'admin' | 'viewer') {
+    const existing = socketParticipation.get(socketId);
+    if (existing?.formId === formId && existing.role === role) {
+        return;
+    }
+
+    removeSocketParticipation(socketId);
+
+    socketParticipation.set(socketId, { formId, role });
+
+    if (role !== 'viewer') {
+        emitParticipantsCount(formId);
+        return;
+    }
+
+    let viewers = formViewerSockets.get(formId);
+    if (!viewers) {
+        viewers = new Set();
+        formViewerSockets.set(formId, viewers);
+    }
+
+    viewers.add(socketId);
+    emitParticipantsCount(formId);
 }
 
 function subscribeParticipantToResults(socketId: string, formId: string, questionId: string) {
@@ -397,8 +455,11 @@ io.on('connection', (socket) => {
             removeSocketSubscription(socket.id);
             socket.join(room(formId));
 
+            setSocketParticipation(socket.id, formId, role);
+
             if (role === 'admin' && hasAdminAccess) {
                 socket.join(adminRoom(formId));
+                emitParticipantsCount(formId);
                 const dashboard = await emitAdminDashboard(formId);
                 if (dashboard.questionId && dashboard.aggregates) {
                     socket.emit('admin:results', {
@@ -621,6 +682,7 @@ io.on('connection', (socket) => {
 
     socket.on('disconnect', () => {
         removeSocketSubscription(socket.id);
+        removeSocketParticipation(socket.id);
     });
 });
 
