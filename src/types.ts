@@ -127,6 +127,7 @@ export type ClientToServerEvents = {
 export type ServerToClientEvents = {
     'state': (state: LiveState) => void;
     'results': (payload: { questionId: string; aggregates: any }) => void;
+    'participants_count': (payload: { count: number }) => void;
     'admin:dashboard': (payload: {
         formId: string;
         sectionIndex: number;
